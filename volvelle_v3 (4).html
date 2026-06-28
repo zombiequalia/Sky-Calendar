@@ -1,0 +1,1637 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="utf-8">
+<title>Sky Calendar Volvelle v3</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/astronomy-engine@2.1.19/astronomy.browser.min.js"></script>
+<style>
+  body { margin: 0; background: #0a0e18; font-family: Georgia, serif; display: flex; flex-direction: column; align-items: center; padding: 20px; color: #d8d4c8; }
+  h1 { font-weight: normal; font-size: 20px; margin: 0 0 10px 0; color: #e0d8c0; }
+  #controls { max-width: 760px; width: 100%; margin: 10px 0; padding: 12px; background: #161c2a; border-radius: 6px; }
+  .control-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; flex-wrap: wrap; }
+  .control-row label { min-width: 110px; font-size: 13px; color: #9aa0b0; }
+  input[type=range] { flex: 1; min-width: 200px; }
+  input[type=number] { width: 80px; padding: 4px; font-family: Georgia, serif; background: #0e1320; color: #d8d4c8; border: 1px solid #4a4f5e; }
+  input[type=checkbox] { margin-right: 6px; }
+  button { padding: 4px 10px; font-family: Georgia, serif; background: #2a3344; border: 1px solid #4a4f5e; border-radius: 3px; cursor: pointer; font-size: 12px; color: #d8d4c8; }
+  button:hover { background: #3a455a; }
+  #info { max-width: 760px; margin-top: 10px; line-height: 1.6; font-size: 13px; }
+  .row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid #2a3344; }
+  .label { color: #9aa0b0; }
+  .value { font-weight: bold; color: #e0d8c0; }
+  .hint { font-size: 12px; color: #6a7080; font-style: italic; margin-top: 6px; }
+  .age { font-size: 14px; color: #e0603a; font-weight: bold; }
+  canvas { max-width: 100% !important; height: auto !important; touch-action: none; }
+  summary { cursor: pointer; font-size: 14px; color: #c9a24a; padding: 4px 0; user-select: none; }
+  #quickbar { position: fixed; bottom: 0; left: 0; right: 0; display: flex; justify-content: center; align-items: center; gap: 6px; padding: 8px; background: rgba(14,19,32,0.92); border-top: 1px solid #2a3344; z-index: 10; }
+  #quickbar button { padding: 8px 12px; font-size: 14px; }
+  #quickbar .qdate { font-size: 12px; color: #9aa0b0; min-width: 90px; text-align: center; }
+  body { padding-bottom: 70px; }
+</style>
+</head>
+<body>
+<h1>Sky Calendar Volvelle</h1>
+<div id="canvas-holder"></div>
+
+<details id="controlsWrap" open><summary>⚙ Controls</summary>
+<div id="controls">
+  <div class="control-row">
+    <label>Jump to date</label>
+    <input type="date" id="datePicker">
+    <button onclick="stepDay(-1)">◀ day</button>
+    <button onclick="stepDay(1)">day ▶</button>
+    <button onclick="stepHour(-1)">◀ hr</button>
+    <button onclick="stepHour(1)">hr ▶</button>
+    <span id="hourLabel" style="font-size:12px; color:#9aa0b0;">00:00 UTC</span>
+    <button onclick="setYearNow()">Today</button>
+  </div>
+  <div class="control-row">
+    <label>Year</label>
+    <input type="number" id="year" value="2026" min="-5000" max="10000">
+    <button onclick="stepYear(-1)">◀ yr</button>
+    <button onclick="stepYear(1)">yr ▶</button>
+    <input type="range" id="yearSlider" min="-5000" max="10000" value="2026" step="1">
+  </div>
+  <div class="control-row">
+    <label>Day of year</label>
+    <input type="range" id="day" min="1" max="365" value="1">
+    <span id="dayLabel">—</span>
+  </div>
+  <div class="control-row">
+    <label>Lunar offset</label>
+    <input type="range" id="lunarOffset" min="-30" max="30" step="0.1" value="0">
+    <span id="offsetLabel">0.0 days</span>
+    <button onclick="autoAlign()">Auto-align</button>
+  </div>
+  <div class="control-row">
+    <label><input type="checkbox" id="showFigures" checked>Constellation figures</label>
+    <label><input type="checkbox" id="showStars" checked>Bright stars</label>
+    <label><input type="checkbox" id="showLabels" checked>Star names</label>
+    <label>Month labels:
+      <select id="labelSet" style="background:#0e1320; color:#d8d4c8; border:1px solid #4a4f5e; font-family:Georgia, serif;">
+        <option value="runic" selected>Runic</option>
+        <option value="english">English</option>
+      </select>
+    </label>
+    <button onclick="exportSVG()">Export SVG</button>
+  </div>
+  <div class="hint">Lunar ring auto-aligns to the new moon nearest the selected date (1900-2100). Use arrows for single-step precision; drag the ring or use the offset slider for manual nudges.</div>
+</div>
+</details>
+
+<div id="quickbar">
+  <button onclick="stepDay(-1)">◀ day</button>
+  <button onclick="stepHour(-1)">◀ hr</button>
+  <span class="qdate" id="quickDate">—</span>
+  <button onclick="stepHour(1)">hr ▶</button>
+  <button onclick="stepDay(1)">day ▶</button>
+</div>
+
+<div id="info"></div>
+
+<script>
+// ============ CONFIG ============
+const LATITUDE = 45.0;
+const LONGITUDE = -100.0;
+const SIZE = 760;
+const CENTER = SIZE / 2;
+
+// Ring radii (from outermost in)
+const R_STAR_OUTER = 360;
+const R_STAR_INNER = 320;
+const R_SIGN_OUTER = 315;
+const R_SIGN_INNER = 285;
+const R_PLANET_OUTER = 282;
+const R_PLANET_INNER = 258;
+const R_SOLAR_OUTER = 250;
+const R_SOLAR_INNER = 200;
+const R_LUNAR_OUTER = 190;
+const R_LUNAR_INNER = 135;
+const R_DAY_MARKER = 105;
+const R_CENTER = 6;
+
+// ============ THEME / SKIN ============
+// All presentation choices live here: label languages, marker styles, art hooks.
+// The astronomy below never changes — only how it's dressed.
+// Future skins: nodeMarker 'wyrm' (dragon head/tail), chase-animals on the rim
+// (e.g. Sköll & Hati pursuing sun and moon), alternate trims and palettes.
+const THEME = {
+  labelSets: {
+    runic: [
+      'ᚨᚾᛟᚱ᛫ᚼᚣᛚ', 'ᛋᛟᛚ᛫ᛗᚣᚾ', 'ᛋᛈᛁᛝ', 'ᛖᛟᛥᚱ',
+      'ᛗᛁᛚᛣ᛫ᛗᚣᚾ', 'ᚠᛟᚱ᛫ᛚᛁᚦᚫ', 'ᚫᚾᛟᚱ᛫ᛚᛁᚦᚫ', 'ᚹᛇᛞ᛫ᛗᚣᚾ',
+      'ᚻᚪᚱᚡᛁᛥ', 'ᚠᚢᛥ᛫ᚠᚱᚪᛥ', 'ᛒᛚᚪᛏ᛫ᛗᚣᚾ', 'ᚠᛟᚱ᛫ᛡᚣᛚ'
+    ],
+    english: [
+      'After Yule', 'Mud Month', 'Stirring Month', 'Dawn Month',
+      'Milking Month', 'Before Litha', 'After Litha', 'Growing Month',
+      'Harvest Month', 'First Frost', 'Slaughter Month', 'Before Yule'
+    ]
+  },
+  numberRunes: ['ᚠ', 'ᚢ', 'ᚦ', 'ᚨ', 'ᚱ', 'ᚲ', 'ᚷ', 'ᚹ', 'ᚺ', 'ᚾ', 'ᛁ', 'ᛃ'],
+  nodeMarker: 'diamond'   // future: 'wyrm'
+};
+
+const C_BG = '#0e1320';        // deep night blue-black
+const C_INK = '#d8d4c8';       // pale parchment (for text/lines that were dark)
+const C_SOLAR = '#c9a24a';     // warm gold
+const C_LUNAR = '#7a93c4';     // soft blue
+const C_HIGHLIGHT = '#e0603a'; // warm orange-red (today marker, solstices)
+const C_FAINT = '#4a4f5e';     // dim slate (faint lines)
+const C_GAP = '#2a3344';       // dark slate-blue (the gap wedge)
+const C_STAR = '#f5f0e0';      // bright star-white
+const C_FIGURE = '#5a6072';    // muted figure lines
+const C_SIGN = '#9aa0b0';      // light slate (sign symbols)
+
+// Bright zodiacal stars and key nearby reference stars
+// Format: { name, ra (J2000 hours), dec (J2000 deg), mag, eclipticLon (J2000 deg), eclipticLat }
+// Pre-computed ecliptic coords for J2000
+const STARS = [
+  { name: 'Aldebaran', eclLon: 69.79, eclLat: -5.47, mag: 0.85, constellation: 'Taurus' },
+  { name: 'Pleiades', eclLon: 60.04, eclLat: 4.05, mag: 1.6, constellation: 'Taurus', cluster: true },
+  { name: 'Castor', eclLon: 110.4, eclLat: 10.10, mag: 1.58, constellation: 'Gemini' },
+  { name: 'Pollux', eclLon: 113.4, eclLat: 6.68, mag: 1.14, constellation: 'Gemini' },
+  { name: 'Regulus', eclLon: 149.83, eclLat: 0.46, mag: 1.40, constellation: 'Leo' },
+  { name: 'Spica', eclLon: 203.85, eclLat: -2.05, mag: 0.97, constellation: 'Virgo' },
+  { name: 'Antares', eclLon: 249.79, eclLat: -4.57, mag: 1.06, constellation: 'Scorpius' },
+  { name: 'Fomalhaut', eclLon: 343.69, eclLat: -21.14, mag: 1.16, constellation: 'Pisces Aus.' },
+  // Reference: Aries head
+  { name: 'Hamal', eclLon: 37.93, eclLat: 9.96, mag: 2.00, constellation: 'Aries' },
+  // Reference: Cancer (faint)
+  { name: 'Praesepe', eclLon: 130.0, eclLat: 1.57, mag: 3.7, constellation: 'Cancer', cluster: true },
+];
+
+// Traditional zodiac sign boundaries (sidereal, J2000 epoch)
+// These are equal 30° divisions starting from sidereal 0° Aries (about 24° from tropical 0° Aries)
+const SIDEREAL_OFFSET_J2000 = 24.0; // approximate offset between tropical and sidereal at J2000
+const SIGNS = [
+  { name: 'Aries', symbol: '♈' },
+  { name: 'Taurus', symbol: '♉' },
+  { name: 'Gemini', symbol: '♊' },
+  { name: 'Cancer', symbol: '♋' },
+  { name: 'Leo', symbol: '♌' },
+  { name: 'Virgo', symbol: '♍' },
+  { name: 'Libra', symbol: '♎' },
+  { name: 'Scorpius', symbol: '♏' },
+  { name: 'Sagittarius', symbol: '♐' },
+  { name: 'Capricorn', symbol: '♑' },
+  { name: 'Aquarius', symbol: '♒' },
+  { name: 'Pisces', symbol: '♓' }
+];
+
+// Cultural ages (which constellation hosts the spring equinox)
+const AGES = [
+  { start: -8000, end: -6450, name: 'Age of Cancer' },
+  { start: -6450, end: -4300, name: 'Age of Gemini' },
+  { start: -4300, end: -2150, name: 'Age of Taurus' },
+  { start: -2150, end: 100, name: 'Age of Aries' },
+  { start: 100, end: 2700, name: 'Age of Pisces' },
+  { start: 2700, end: 4800, name: 'Age of Aquarius' },
+  { start: 4800, end: 7000, name: 'Age of Capricorn' }
+];
+
+// ============ STATE ============
+let state = {
+  year: 2026,
+  dayOfYear: 1,
+  hour: 0,
+  labelSet: 'runic',
+  lunarOffsetDays: 0,
+  autoAnchor: 0,
+  isDragging: false,
+  dragStartAngle: 0,
+  dragStartOffset: 0,
+  showFigures: true,
+  showStars: true,
+  showLabels: true
+};
+
+// ============ HELPERS ============
+function isLeap(year) {
+  return ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0);
+}
+
+function yearLength(year) {
+  return isLeap(year) ? 366 : 365;
+}
+
+function dateFromDayOfYear(year, day) {
+  return new Date(Date.UTC(year, 0, day));
+}
+
+// Day-of-year to angle, with winter solstice at bottom (~day 355), proceeding counter-clockwise
+// (so spring equinox is at right/east, summer solstice at top/north, fall equinox at left/west)
+function dayToAngle(dayOfYear, yearLen) {
+  const wsDay = 355;
+  const daysFromWS = ((dayOfYear - wsDay) % yearLen + yearLen) % yearLen;
+  return 90 - (daysFromWS / yearLen) * 360;
+}
+
+// Ecliptic longitude (0° = vernal equinox, tropical) to angle on disc
+// At vernal equinox, the sun is at 0° ecliptic longitude.
+// The vernal equinox happens around day 79 in our year coordinate.
+function eclLonToAngle(eclLon, yearLen) {
+  // Sun moves through ecliptic at ~0.986°/day. Vernal equinox = day 79, lon 0.
+  // So day_of_year = 79 + eclLon / 0.9856 (mod yearLen)
+  const dayEquiv = 79 + eclLon / 0.9856;
+  return dayToAngle(dayEquiv, yearLen);
+}
+
+// Apply precession: convert J2000 ecliptic longitude to longitude at target year
+// Precession rate ~50.29 arcsec/year = 0.01397°/year westward
+// Stars appear to move EASTWARD relative to equinox as time progresses
+// So at year Y, a star's ecliptic longitude is: lon_J2000 + (Y - 2000) * 0.01397
+function precessLon(lonJ2000, year) {
+  const yearsFromJ2000 = year - 2000;
+  return lonJ2000 + yearsFromJ2000 * 0.01397;
+}
+
+function angleToXY(angleDeg, radius) {
+  const a = angleDeg * Math.PI / 180;
+  return { x: CENTER + Math.cos(a) * radius, y: CENTER + Math.sin(a) * radius };
+}
+
+function findNewMoons(startDate, endDate) {
+  const results = [];
+  let date = new Date(startDate);
+  let safety = 0;
+  while (date < endDate && safety < 30) {
+    const nm = Astronomy.SearchMoonPhase(0, date, 40);
+    if (!nm || nm.date >= endDate) break;
+    results.push(nm.date);
+    date = new Date(nm.date.getTime() + 86400000 * 25);
+    safety++;
+  }
+  return results;
+}
+
+function computeAutoAnchor(year) {
+  // For years in astronomy-engine's reliable range, anchor to the new moon
+  // NEAREST THE SELECTED DATE (continuous re-anchoring). The ring keeps its
+  // even 29.53-day spacing, but is always locally exact around the date being
+  // viewed — the digital equivalent of twisting a physical volvelle's lunar
+  // ring to match tonight's observed moon. Residual drift only appears at the
+  // far side of the year from the selected date.
+  if (year >= 1900 && year <= 2100) {
+    const SYNODIC = 29.5306;
+    const wsDate = new Date(Date.UTC(year - 1, 11, 21));
+    const selDate = dateFromDayOfYear(year, state.dayOfYear);
+    // Search for the first new moon in a window starting ~15 days before the
+    // selected date: that new moon is within ±half a lunation, i.e. the nearest.
+    try {
+      const searchStart = new Date(selDate.getTime() - 15 * 86400000);
+      const nm = Astronomy.SearchMoonPhase(0, searchStart, 31);
+      if (nm) {
+        const nmDays = (nm.date - wsDate) / 86400000;
+        // Choose the anchor (days past WS of the lunation-series start) such
+        // that one ring boundary lands exactly on this new moon:
+        // anchor ≡ nmDays (mod synodic), normalized into [0, synodic).
+        return ((nmDays % SYNODIC) + SYNODIC) % SYNODIC;
+      }
+    } catch (e) {
+      console.error('Nearest new moon search failed:', e);
+    }
+    // Fallback: first new moon after winter solstice (original behavior)
+    const searchEnd = new Date(Date.UTC(year + 1, 2, 1));
+    const allNewMoons = findNewMoons(wsDate, searchEnd);
+    if (allNewMoons.length > 0) {
+      const firstNM = allNewMoons[0];
+      return (firstNM - wsDate) / 86400000;
+    }
+  }
+  // Outside that range, extrapolate using the Metonic cycle.
+  // Reference: in year 2000, winter solstice (Dec 21, 1999) was followed by
+  // a new moon on Jan 6, 2000 — so anchor was ~16 days.
+  // Each year, lunar position drifts ~10.875 days earlier (relative to solar year).
+  // Over 19 years, it nearly resets (Metonic cycle, ~6939.69 days vs 19*365.24 = 6939.56).
+  const REF_YEAR = 2000;
+  const REF_ANCHOR = 16.0;
+  const SYNODIC = 29.5306;
+  const SOLAR_YEAR = 365.2422;
+  // Days drift per year: 12 lunar months minus 1 solar year
+  const driftPerYear = 12 * SYNODIC - SOLAR_YEAR; // ~-10.875
+  let anchor = REF_ANCHOR + (year - REF_YEAR) * driftPerYear;
+  // Normalize to [0, SYNODIC) — when anchor exceeds one lunar cycle past WS,
+  // the "first new moon after WS" is really the next one, which is anchor - SYNODIC
+  // So we reduce modulo SYNODIC to get the actual first-new-moon-after-WS offset
+  anchor = ((anchor % SYNODIC) + SYNODIC) % SYNODIC;
+  return anchor;
+}
+
+// Is this a Þrilīþa ("three-Litha") year — a 13-month lunisolar leap year?
+// Detected observationally: count the lunations between this lunar year's first
+// new moon (after winter solstice) and the next year's. 13 lunations = leap.
+// This is the Anglo-Saxon rule per Bede: the extra month doubles midsummer,
+// giving three Litha months in a row.
+function isThirdLithaYear(year) {
+  const SYNODIC = 29.5306;
+  if (year >= 1900 && year <= 2099) {
+    try {
+      const ws0 = new Date(Date.UTC(year - 1, 11, 21));
+      const ws1 = new Date(Date.UTC(year, 11, 21));
+      const nm0 = Astronomy.SearchMoonPhase(0, ws0, 40);
+      const nm1 = Astronomy.SearchMoonPhase(0, ws1, 40);
+      if (nm0 && nm1) {
+        const lunations = Math.round((nm1.date - nm0.date) / (SYNODIC * 86400000));
+        return lunations === 13;
+      }
+    } catch (e) { console.error('Leap detection error:', e); }
+  }
+  // Metonic extrapolation outside the precise range: a leap year is one where
+  // the first-new-moon anchor INCREASES from this year to the next (the 13th
+  // lunation pushes it forward ~18.7d instead of the normal -10.9d drift).
+  const REF_YEAR = 2000, REF_ANCHOR = 16.0;
+  const driftPerYear = 12 * SYNODIC - 365.2422;
+  function metonicAnchor(y) {
+    let a = REF_ANCHOR + (y - REF_YEAR) * driftPerYear;
+    return ((a % SYNODIC) + SYNODIC) % SYNODIC;
+  }
+  return metonicAnchor(year + 1) > metonicAnchor(year);
+}
+
+function currentAge(year) {
+  for (const a of AGES) {
+    if (year >= a.start && year < a.end) return a.name;
+  }
+  return 'Unknown age';
+}
+
+// ============ DRAWING ============
+function setup() {
+  const canvas = createCanvas(SIZE, SIZE);
+  canvas.parent('canvas-holder');
+  textFont('Georgia');
+  
+  state.year = parseInt(document.getElementById('year').value);
+  state.dayOfYear = parseInt(document.getElementById('day').value);
+  autoAlign();
+  
+  // Wire controls
+  document.getElementById('year').addEventListener('change', (e) => {
+    state.year = parseInt(e.target.value);
+    syncControls();
+    autoAlign();
+  });
+  document.getElementById('yearSlider').addEventListener('input', (e) => {
+    state.year = parseInt(e.target.value);
+    syncControls();
+    autoAlign();
+  });
+  document.getElementById('day').addEventListener('input', (e) => {
+    state.dayOfYear = parseInt(e.target.value);
+    state.autoAnchor = computeAutoAnchor(state.year);
+    syncControls();
+    redraw();
+    updateInfo();
+  });
+  document.getElementById('lunarOffset').addEventListener('input', (e) => {
+    state.lunarOffsetDays = parseFloat(e.target.value);
+    document.getElementById('offsetLabel').textContent = `${state.lunarOffsetDays.toFixed(1)} days`;
+    redraw();
+    updateInfo();
+  });
+  document.getElementById('showFigures').addEventListener('change', (e) => {
+    state.showFigures = e.target.checked;
+    redraw();
+  });
+  document.getElementById('showStars').addEventListener('change', (e) => {
+    state.showStars = e.target.checked;
+    redraw();
+  });
+  document.getElementById('showLabels').addEventListener('change', (e) => {
+    state.showLabels = e.target.checked;
+    redraw();
+  });
+  
+  document.getElementById('labelSet').addEventListener('change', (e) => {
+    state.labelSet = e.target.value;
+    redraw();
+  });
+  
+  // Date picker — sets year + day-of-year together (works 1900-2100)
+  document.getElementById('datePicker').addEventListener('change', (e) => {
+    if (!e.target.value) return;
+    const parts = e.target.value.split('-');
+    const y = parseInt(parts[0]);
+    const m = parseInt(parts[1]);
+    const d = parseInt(parts[2]);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    state.year = y;
+    state.dayOfYear = Math.floor((dt - new Date(Date.UTC(y, 0, 0))) / 86400000);
+    syncControls();
+    autoAlign();
+  });
+  
+  // Initialize date picker to today
+  setYearNow();
+  
+  noLoop();
+  redraw();
+  updateInfo();
+}
+
+// Keep all date controls visually in sync with state
+function syncControls() {
+  const yl = yearLength(state.year);
+  if (state.dayOfYear < 1) state.dayOfYear = 1;
+  if (state.dayOfYear > yl) state.dayOfYear = yl;
+  document.getElementById('year').value = state.year;
+  document.getElementById('yearSlider').value = state.year;
+  document.getElementById('day').max = yl;
+  document.getElementById('day').value = state.dayOfYear;
+  document.getElementById('hourLabel').textContent = String(state.hour).padStart(2, '0') + ':00 UTC';
+  const qd = document.getElementById('quickDate');
+  if (qd) {
+    const dt = dateFromDayOfYear(state.year, state.dayOfYear);
+    qd.textContent = dt.toUTCString().slice(5, 11) + ' ' + state.year + ' · ' + String(state.hour).padStart(2, '0') + 'h';
+  }
+  // Update date picker if in valid HTML-date range
+  if (state.year >= 1 && state.year <= 9999) {
+    const dt = dateFromDayOfYear(state.year, state.dayOfYear);
+    const iso = dt.toISOString().slice(0, 10);
+    document.getElementById('datePicker').value = iso;
+  }
+}
+
+// Step hour forward/back, rolling over into days
+function stepHour(delta) {
+  state.hour += delta;
+  if (state.hour > 23) { state.hour = 0; stepDay(1); return; }
+  if (state.hour < 0) { state.hour = 23; stepDay(-1); return; }
+  state.autoAnchor = computeAutoAnchor(state.year);
+  syncControls();
+  redraw();
+  updateInfo();
+}
+
+// Step day forward/back by one, rolling over year boundaries
+function stepDay(delta) {
+  state.dayOfYear += delta;
+  const yl = yearLength(state.year);
+  if (state.dayOfYear > yl) {
+    state.dayOfYear = 1;
+    state.year += 1;
+    syncControls();
+    autoAlign();
+    return;
+  }
+  if (state.dayOfYear < 1) {
+    state.year -= 1;
+    state.dayOfYear = yearLength(state.year);
+    syncControls();
+    autoAlign();
+    return;
+  }
+  state.autoAnchor = computeAutoAnchor(state.year);
+  syncControls();
+  redraw();
+  updateInfo();
+}
+
+// Step year forward/back by one
+function stepYear(delta) {
+  state.year += delta;
+  syncControls();
+  autoAlign();
+}
+
+function setYearNow() {
+  const now = new Date();
+  state.year = now.getFullYear();
+  state.dayOfYear = Math.floor((now - new Date(state.year, 0, 0)) / 86400000);
+  syncControls();
+  autoAlign();
+}
+
+function autoAlign() {
+  state.autoAnchor = computeAutoAnchor(state.year);
+  state.lunarOffsetDays = 0;
+  document.getElementById('lunarOffset').value = 0;
+  document.getElementById('offsetLabel').textContent = '0.0 days';
+  redraw();
+  updateInfo();
+}
+
+function draw() {
+  background(C_BG);
+  const yearLen = yearLength(state.year);
+  drawStarRing(yearLen);
+  drawSignRing(yearLen);
+  drawPlanetRing(yearLen);
+  drawSolarRing(yearLen);
+  drawSolarStations(yearLen);
+  drawLunarRing(yearLen);
+  drawCompassRose();
+  drawTodayMarker(state.dayOfYear, yearLen);
+  drawCenter();
+}
+
+// ============ SVG EXPORT ============
+// Re-renders the disc's current state as layered SVG for Inkscape/Illustrator.
+// Works by temporarily replacing the p5 drawing primitives with SVG emitters,
+// replaying each layer function into its own named <g> group, then restoring p5.
+function exportSVG() {
+  const yearLen = yearLength(state.year);
+  let out = [];
+  // --- emitter state ---
+  let sFill = '#000000', sStroke = null, sSW = 1, sTS = 12, sFillOn = true, sStrokeOn = false;
+  let pathPts = null;
+  let xform = [];        // stack of transform strings
+  let xformLive = [];    // currently-applied transforms
+  let rectCentered = false;
+  
+  function colorToSvg(args) {
+    if (args.length === 1) return String(args[0]);
+    if (args.length >= 3) {
+      const a = args.length === 4 ? args[3] / 255 : 1;
+      return `rgba(${args[0]},${args[1]},${args[2]},${a.toFixed(3)})`;
+    }
+    return '#000000';
+  }
+  function attrs() {
+    const f = sFillOn ? `fill="${sFill}"` : 'fill="none"';
+    const s = sStrokeOn && sStroke ? `stroke="${sStroke}" stroke-width="${sSW}"` : '';
+    return `${f} ${s}`;
+  }
+  function wrap(el) {
+    if (xformLive.length) return `<g transform="${xformLive.join(' ')}">${el}</g>`;
+    return el;
+  }
+  
+  // --- save real p5 functions ---
+  const real = {};
+  const fns = ['background','circle','line','rect','text','textSize','textAlign','textStyle',
+               'fill','stroke','strokeWeight','noFill','noStroke','beginShape','vertex',
+               'endShape','push','pop','translate','rotate','rectMode'];
+  for (const f of fns) real[f] = window[f];
+  
+  // --- install emitters ---
+  window.background = () => {};
+  window.fill = (...a) => { sFill = colorToSvg(a); sFillOn = true; };
+  window.stroke = (...a) => { sStroke = colorToSvg(a); sStrokeOn = true; };
+  window.noFill = () => { sFillOn = false; };
+  window.noStroke = () => { sStrokeOn = false; };
+  window.strokeWeight = (w) => { sSW = w; };
+  window.textSize = (t) => { sTS = t; };
+  window.textAlign = () => {};
+  window.textStyle = () => {};
+  window.rectMode = (m) => { rectCentered = true; };
+  window.circle = (x, y, d) => { out.push(wrap(`<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${(d/2).toFixed(2)}" ${attrs()}/>`)); };
+  window.line = (x1, y1, x2, y2) => { out.push(wrap(`<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" stroke="${sStroke||'#000'}" stroke-width="${sSW}"/>`)); };
+  window.rect = (x, y, w, h) => {
+    const rx = rectCentered ? x - w/2 : x, ry = rectCentered ? y - h/2 : y;
+    out.push(wrap(`<rect x="${rx.toFixed(2)}" y="${ry.toFixed(2)}" width="${w}" height="${h}" ${attrs()}/>`));
+  };
+  window.text = (str, x, y) => {
+    const esc = String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    out.push(wrap(`<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" font-size="${sTS}" font-family="Georgia, serif" text-anchor="middle" dominant-baseline="central" fill="${sFillOn ? sFill : '#000'}">${esc}</text>`));
+  };
+  window.beginShape = () => { pathPts = []; };
+  window.vertex = (x, y) => { if (pathPts) pathPts.push(`${x.toFixed(2)},${y.toFixed(2)}`); };
+  window.endShape = (mode) => {
+    if (pathPts && pathPts.length) {
+      const d = 'M' + pathPts.join(' L') + (mode !== undefined ? ' Z' : '');
+      out.push(wrap(`<path d="${d}" ${attrs()}/>`));
+    }
+    pathPts = null;
+  };
+  window.push = () => { xform.push(xformLive.slice()); };
+  window.pop = () => { xformLive = xform.pop() || []; rectCentered = false; };
+  window.translate = (x, y) => { xformLive.push(`translate(${x.toFixed(2)} ${y.toFixed(2)})`); };
+  window.rotate = (r) => { xformLive.push(`rotate(${(r * 180 / Math.PI).toFixed(2)})`); };
+  
+  // --- replay each layer into a named group ---
+  const layers = [
+    ['star-ring',      () => drawStarRing(yearLen)],
+    ['sign-ring',      () => drawSignRing(yearLen)],
+    ['planet-ring',    () => drawPlanetRing(yearLen)],
+    ['solar-ring',     () => drawSolarRing(yearLen)],
+    ['solar-stations', () => drawSolarStations(yearLen)],
+    ['lunar-ring',     () => drawLunarRing(yearLen)],
+    ['compass-rose',   () => drawCompassRose()],
+    ['today-marker',   () => drawTodayMarker(state.dayOfYear, yearLen)],
+    ['center',         () => drawCenter()]
+  ];
+  
+  let body = `<rect width="${SIZE}" height="${SIZE}" fill="${C_BG}" id="background"/>\n`;
+  try {
+    for (const [name, fn] of layers) {
+      out = [];
+      xform = []; xformLive = []; pathPts = null; rectCentered = false;
+      try { fn(); } catch (e) { console.error('SVG layer error:', name, e); }
+      body += `<g id="${name}" inkscape:groupmode="layer" inkscape:label="${name}">\n${out.join('\n')}\n</g>\n`;
+    }
+  } finally {
+    // --- restore p5 no matter what ---
+    for (const f of fns) window[f] = real[f];
+  }
+  
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">
+${body}</svg>`;
+  
+  const blob = new Blob([svg], { type: 'image/svg+xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const d = dateFromDayOfYear(state.year, state.dayOfYear);
+  a.download = `volvelle_${state.year}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}.svg`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function drawCompassRose() {
+  // Compass rose drawn in the center area, inside the lunar ring
+  // N at top (angle 270° in p5 coords = -90° = top), E at right (0°), S bottom (90°), W left (180°)
+  const R_COMPASS_OUTER = 95;
+  const R_COMPASS_INNER = 55;
+  const R_COMPASS_LABEL = 105;
+  
+  // Faint background circle
+  noFill();
+  stroke(C_FAINT);
+  strokeWeight(0.5);
+  circle(CENTER, CENTER, R_COMPASS_OUTER * 2);
+  
+  // Cardinal directions (N, E, S, W) — heavier lines
+  stroke(C_INK);
+  strokeWeight(0.8);
+  // N (top): p5 angle 270°
+  line(CENTER, CENTER - R_COMPASS_INNER, CENTER, CENTER - R_COMPASS_OUTER);
+  // E (right): p5 angle 0°
+  line(CENTER + R_COMPASS_INNER, CENTER, CENTER + R_COMPASS_OUTER, CENTER);
+  // S (bottom): p5 angle 90°
+  line(CENTER, CENTER + R_COMPASS_INNER, CENTER, CENTER + R_COMPASS_OUTER);
+  // W (left): p5 angle 180°
+  line(CENTER - R_COMPASS_INNER, CENTER, CENTER - R_COMPASS_OUTER, CENTER);
+  
+  // Intercardinal directions (NE, SE, SW, NW) — thinner
+  strokeWeight(0.4);
+  const diag = Math.SQRT1_2; // 1/sqrt(2)
+  // NE
+  line(CENTER + R_COMPASS_INNER * diag, CENTER - R_COMPASS_INNER * diag,
+       CENTER + R_COMPASS_OUTER * diag, CENTER - R_COMPASS_OUTER * diag);
+  // SE
+  line(CENTER + R_COMPASS_INNER * diag, CENTER + R_COMPASS_INNER * diag,
+       CENTER + R_COMPASS_OUTER * diag, CENTER + R_COMPASS_OUTER * diag);
+  // SW
+  line(CENTER - R_COMPASS_INNER * diag, CENTER + R_COMPASS_INNER * diag,
+       CENTER - R_COMPASS_OUTER * diag, CENTER + R_COMPASS_OUTER * diag);
+  // NW
+  line(CENTER - R_COMPASS_INNER * diag, CENTER - R_COMPASS_INNER * diag,
+       CENTER - R_COMPASS_OUTER * diag, CENTER - R_COMPASS_OUTER * diag);
+  
+  // Cardinal labels
+  noStroke();
+  fill(C_INK);
+  textSize(13);
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  text('N', CENTER, CENTER - R_COMPASS_LABEL);
+  text('E', CENTER + R_COMPASS_LABEL, CENTER);
+  text('S', CENTER, CENTER + R_COMPASS_LABEL);
+  text('W', CENTER - R_COMPASS_LABEL, CENTER);
+  textStyle(NORMAL);
+  
+  // Intercardinal labels (smaller)
+  textSize(9);
+  fill(C_SIGN);
+  const interR = R_COMPASS_LABEL - 2;
+  text('NE', CENTER + interR * diag, CENTER - interR * diag);
+  text('SE', CENTER + interR * diag, CENTER + interR * diag);
+  text('SW', CENTER - interR * diag, CENTER + interR * diag);
+  text('NW', CENTER - interR * diag, CENTER - interR * diag);
+  
+  // Sunrise/sunset azimuth markers for 45°N at the four solar pillars
+  // Azimuths (compass degrees, 0=N, 90=E, 180=S, 270=W):
+  //   Summer solstice: sunrise 57°, sunset 303°
+  //   Equinoxes: sunrise 90°, sunset 270°
+  //   Winter solstice: sunrise 123°, sunset 237°
+  const sunriseMarkers = [
+    { az: 57, label: 'SS', color: C_HIGHLIGHT },  // summer solstice sunrise
+    { az: 90, label: 'EQ', color: C_SOLAR },       // equinox sunrise
+    { az: 123, label: 'WS', color: '#6a8ac4' }     // winter solstice sunrise
+  ];
+  const sunsetMarkers = [
+    { az: 303, label: 'SS', color: C_HIGHLIGHT },
+    { az: 270, label: 'EQ', color: C_SOLAR },
+    { az: 237, label: 'WS', color: '#6a8ac4' }
+  ];
+  
+  const drawAzMarker = (azCompass, color) => {
+    // Convert compass azimuth to p5 angle:
+    // Compass 0° = N = p5 270° (top)
+    // So p5_angle = compass_az - 90  (then normalized)
+    const p5Angle = (azCompass - 90) * Math.PI / 180;
+    const x = CENTER + Math.cos(p5Angle) * R_COMPASS_OUTER;
+    const y = CENTER + Math.sin(p5Angle) * R_COMPASS_OUTER;
+    // Small filled triangle pointing inward
+    fill(color);
+    noStroke();
+    circle(x, y, 5);
+  };
+  
+  for (const m of sunriseMarkers) drawAzMarker(m.az, m.color);
+  for (const m of sunsetMarkers) drawAzMarker(m.az, m.color);
+}
+
+function drawStarRing(yearLen) {
+  noFill();
+  stroke(C_FAINT);
+  strokeWeight(0.5);
+  circle(CENTER, CENTER, R_STAR_OUTER * 2);
+  circle(CENTER, CENTER, R_STAR_INNER * 2);
+  
+  // Compute current positions for all stars
+  const positions = STARS.map(s => ({
+    ...s,
+    currentLon: precessLon(s.eclLon, state.year)
+  }));
+  
+  // Draw constellation figures (simple lines between stars in same constellation)
+  if (state.showFigures) {
+    stroke(C_FIGURE);
+    strokeWeight(0.5);
+    // Group stars by constellation
+    const byConst = {};
+    for (const p of positions) {
+      if (!byConst[p.constellation]) byConst[p.constellation] = [];
+      byConst[p.constellation].push(p);
+    }
+    // Draw lines connecting stars in same constellation (where >1 star)
+    for (const cname in byConst) {
+      const stars = byConst[cname];
+      if (stars.length < 2) continue;
+      // Just connect them in order; not anatomically correct but indicates grouping
+      for (let i = 0; i < stars.length - 1; i++) {
+        const a1 = eclLonToAngle(stars[i].currentLon, yearLen);
+        const a2 = eclLonToAngle(stars[i + 1].currentLon, yearLen);
+        const radius = (R_STAR_OUTER + R_STAR_INNER) / 2;
+        const p1 = angleToXY(a1, radius - stars[i].eclLat * 0.5);
+        const p2 = angleToXY(a2, radius - stars[i + 1].eclLat * 0.5);
+        line(p1.x, p1.y, p2.x, p2.y);
+      }
+    }
+  }
+  
+  // Draw stars
+  if (state.showStars) {
+    for (const p of positions) {
+      const angle = eclLonToAngle(p.currentLon, yearLen);
+      const radius = (R_STAR_OUTER + R_STAR_INNER) / 2 - p.eclLat * 0.5;
+      const pos = angleToXY(angle, radius);
+      // Size by magnitude (brighter = bigger; mag 1 -> 5px, mag 3 -> 2px)
+      const dotSize = Math.max(2, 7 - p.mag * 1.5);
+      noStroke();
+      fill(C_STAR);
+      if (p.cluster) {
+        // Draw clusters as small star groups
+        circle(pos.x - 2, pos.y, dotSize - 1);
+        circle(pos.x + 2, pos.y, dotSize - 1);
+        circle(pos.x, pos.y - 2, dotSize - 1);
+      } else {
+        circle(pos.x, pos.y, dotSize);
+      }
+      
+      // Star name labels
+      if (state.showLabels) {
+        fill(C_INK);
+        textSize(9);
+        textAlign(CENTER, CENTER);
+        const labelPos = angleToXY(angle, R_STAR_OUTER + 12);
+        text(p.name, labelPos.x, labelPos.y);
+      }
+    }
+  }
+}
+
+// Mean lunar ascending node longitude (tropical, degrees) for a given date.
+// Standard mean-node formula (Meeus): regresses ~19.34°/year, full cycle 18.61 years.
+function meanLunarNode(date) {
+  const jd = (date.getTime() / 86400000) + 2440587.5;
+  const T = (jd - 2451545.0) / 36525.0;
+  let omega = 125.04452 - 1934.136261 * T + 0.0020708 * T * T;
+  omega = ((omega % 360) + 360) % 360;
+  return omega;
+}
+
+function drawPlanetRing(yearLen) {
+  // Ring boundaries
+  noFill();
+  stroke(C_FAINT);
+  strokeWeight(0.5);
+  circle(CENTER, CENTER, R_PLANET_OUTER * 2);
+  circle(CENTER, CENTER, R_PLANET_INNER * 2);
+  
+  const wanderers = [
+    { sym: '☉', body: 'Sun', color: '#d9a520' },
+    { sym: '☽', body: 'Moon', color: '#8a8a8a' },
+    { sym: '☿', body: 'Mercury', color: '#9a7a4a' },
+    { sym: '♀', body: 'Venus', color: '#c9a050' },
+    { sym: '♂', body: 'Mars', color: '#b04030' },
+    { sym: '♃', body: 'Jupiter', color: '#7a6a4a' },
+    { sym: '♄', body: 'Saturn', color: '#5a5a7a' }
+  ];
+  
+  const date = new Date(dateFromDayOfYear(state.year, state.dayOfYear).getTime() + state.hour * 3600000);
+  
+  if (state.year < 1900 || state.year > 2100) {
+    fill(C_FAINT);
+    noStroke();
+    textSize(9);
+    textAlign(CENTER, CENTER);
+    const notePos = angleToXY(90, (R_PLANET_INNER + R_PLANET_OUTER) / 2);
+    text('planets: 1900-2100 only', notePos.x, notePos.y);
+    return;
+  }
+  
+  const midR = (R_PLANET_INNER + R_PLANET_OUTER) / 2;
+  const halfW = (R_PLANET_OUTER - R_PLANET_INNER) / 2;
+  
+  // ===== ECLIPSE SEASON BANDS =====
+  // Shaded arcs ±17° around each node: where sun+node alignment makes eclipses possible.
+  const ascNode = meanLunarNode(date);
+  const descNode = (ascNode + 180) % 360;
+  const ECLIPSE_LIMIT = 17;
+  
+  for (const nodeLon of [ascNode, descNode]) {
+    noStroke();
+    fill(42, 70, 55, 160); // dim green-slate band
+    beginShape();
+    const steps = 24;
+    for (let i = 0; i <= steps; i++) {
+      const lon = nodeLon - ECLIPSE_LIMIT + (2 * ECLIPSE_LIMIT * i / steps);
+      const a = eclLonToAngle(lon, yearLen) * Math.PI / 180;
+      vertex(CENTER + Math.cos(a) * R_PLANET_OUTER, CENTER + Math.sin(a) * R_PLANET_OUTER);
+    }
+    for (let i = steps; i >= 0; i--) {
+      const lon = nodeLon - ECLIPSE_LIMIT + (2 * ECLIPSE_LIMIT * i / steps);
+      const a = eclLonToAngle(lon, yearLen) * Math.PI / 180;
+      vertex(CENTER + Math.cos(a) * R_PLANET_INNER, CENTER + Math.sin(a) * R_PLANET_INNER);
+    }
+    endShape(CLOSE);
+  }
+  
+  // ===== NODE MARKERS (☊ ascending, ☋ descending) =====
+  // The dragon's head and tail — where the moon's orbit crosses the ecliptic plane.
+  const nodeMarkers = [
+    { lon: ascNode, sym: '☊' },
+    { lon: descNode, sym: '☋' }
+  ];
+  for (const n of nodeMarkers) {
+    const a = eclLonToAngle(n.lon, yearLen);
+    const pos = angleToXY(a, midR);
+    // Open diamond outline (placeholder for the future wyrm)
+    stroke('#7ac490');
+    strokeWeight(1.5);
+    noFill();
+    push();
+    translate(pos.x, pos.y);
+    rotate(Math.PI / 4);
+    rectMode(CENTER);
+    rect(0, 0, 11, 11);
+    pop();
+    // Symbol just outside the ring
+    fill('#7ac490');
+    noStroke();
+    textSize(11);
+    textAlign(CENTER, CENTER);
+    const labelPos = angleToXY(a, R_PLANET_OUTER + 10);
+    text(n.sym, labelPos.x, labelPos.y);
+  }
+  
+  // ===== EARTH'S SHADOW (anti-solar point) =====
+  // Earth's shadow always sits exactly opposite the sun. A full moon entering
+  // this circle = lunar eclipse. Drawn before the bodies so the moon passes over it.
+  let sunLonNow = null;
+  try {
+    const sv = Astronomy.GeoVector('Sun', date, true);
+    sunLonNow = Astronomy.Ecliptic(sv).elon;
+  } catch (e) {}
+  if (sunLonNow !== null) {
+    const shadowLon = (sunLonNow + 180) % 360;
+    const sa = eclLonToAngle(shadowLon, yearLen);
+    const spos = angleToXY(sa, midR);
+    noFill();
+    stroke('#6a2828');
+    strokeWeight(1.2);
+    circle(spos.x, spos.y, 22);   // umbra (slightly larger than moon marker)
+    stroke('#6a2828');
+    strokeWeight(0.4);
+    circle(spos.x, spos.y, 32);   // penumbra, fainter
+  }
+  
+  // ===== PLANETS AND LUMINARIES =====
+  for (const w of wanderers) {
+    let eclLonOfDate;
+    let moonLat = null;
+    try {
+      if (w.body === 'Moon') {
+        const ecl = Astronomy.EclipticGeoMoon(date);
+        eclLonOfDate = ecl.lon;
+        moonLat = ecl.lat;  // ecliptic latitude, ±5.1° max
+      } else {
+        const vec = Astronomy.GeoVector(w.body, date, true);
+        const ecl = Astronomy.Ecliptic(vec);
+        eclLonOfDate = ecl.elon;
+      }
+    } catch (e) {
+      console.error('Planet position error for', w.body, e);
+      continue;
+    }
+    
+    const angle = eclLonToAngle(eclLonOfDate, yearLen);
+    
+    // Moon latitude weaving: offset the moon radially by its ecliptic latitude.
+    // Ring centerline = the ecliptic plane. Outward = north of plane, inward = south.
+    let r = midR;
+    if (w.body === 'Moon' && moonLat !== null) {
+      const latScale = (halfW - 9) / 5.2;
+      r = midR + moonLat * latScale;
+    }
+    
+    const pos = angleToXY(angle, r);
+    
+    // Sun gets rays extending beyond its disc — so when the moon (drawn after)
+    // covers the disc, the corona-like rays still show: a visible eclipse.
+    if (w.body === 'Sun') {
+      stroke('#d9a520');
+      strokeWeight(1.2);
+      for (let i = 0; i < 12; i++) {
+        const ra = (i / 12) * 2 * Math.PI;
+        const r1 = 9, r2 = 15;
+        line(pos.x + Math.cos(ra) * r1, pos.y + Math.sin(ra) * r1,
+             pos.x + Math.cos(ra) * r2, pos.y + Math.sin(ra) * r2);
+      }
+      noStroke();
+    }
+    
+    fill(w.color);
+    noStroke();
+    circle(pos.x, pos.y, 16);
+    fill('#ffffff');
+    textSize(12);
+    textAlign(CENTER, CENTER);
+    textStyle(NORMAL);
+    text(w.sym, pos.x, pos.y + 1);
+  }
+  
+  // Faint centerline = the ecliptic plane itself
+  noFill();
+  stroke(C_FAINT);
+  strokeWeight(0.3);
+  circle(CENTER, CENTER, midR * 2);
+}
+
+function drawSignRing(yearLen) {
+  // Sidereal zodiac signs — 12 equal 30° divisions, precession-adjusted
+  noFill();
+  stroke(C_SIGN);
+  strokeWeight(0.5);
+  circle(CENTER, CENTER, R_SIGN_OUTER * 2);
+  circle(CENTER, CENTER, R_SIGN_INNER * 2);
+  
+  // The sign ring shows SIDEREAL constellated signs, aligned to the star background.
+  // To convert a sidereal longitude L_sid to a tropical longitude (which eclLonToAngle
+  // expects), ADD the ayanamsa: L_trop = L_sid + ayanamsa.
+  const ayanamsa = SIDEREAL_OFFSET_J2000 + (state.year - 2000) * 0.01397;
+  const baseLon = ayanamsa;  // tropical longitude of sidereal Aries 0°
+  
+  // Draw 12 boundaries
+  for (let i = 0; i < 12; i++) {
+    const lon = baseLon + i * 30;
+    const angle = eclLonToAngle(lon, yearLen);
+    const p1 = angleToXY(angle, R_SIGN_INNER);
+    const p2 = angleToXY(angle, R_SIGN_OUTER);
+    line(p1.x, p1.y, p2.x, p2.y);
+  }
+  
+  // Sign symbols/names
+  textSize(11);
+  textAlign(CENTER, CENTER);
+  fill(C_SIGN);
+  noStroke();
+  for (let i = 0; i < 12; i++) {
+    const lon = baseLon + i * 30 + 15; // center of sign
+    const angle = eclLonToAngle(lon, yearLen);
+    const pos = angleToXY(angle, (R_SIGN_OUTER + R_SIGN_INNER) / 2);
+    text(SIGNS[i].symbol, pos.x, pos.y);
+  }
+}
+
+function drawSolarRing(yearLen) {
+  // First, draw the day/night shading inside the ring
+  drawDaylightShading(yearLen);
+  
+  // Ring boundaries
+  noFill();
+  stroke(C_SOLAR);
+  strokeWeight(1);
+  circle(CENTER, CENTER, R_SOLAR_OUTER * 2);
+  circle(CENTER, CENTER, R_SOLAR_INNER * 2);
+  
+  // 12 solar months (also serve as a visual ruler for daylight hours:
+  // each 30° segment ≈ 2 hours when the ring is read as a 24-hour scale)
+  strokeWeight(0.5);
+  for (let m = 0; m < 12; m++) {
+    const angle = dayToAngle(355 + (m * yearLen / 12), yearLen);
+    const p1 = angleToXY(angle, R_SOLAR_INNER);
+    const p2 = angleToXY(angle, R_SOLAR_OUTER);
+    line(p1.x, p1.y, p2.x, p2.y);
+  }
+  
+  stroke(C_FAINT);
+  strokeWeight(0.3);
+  for (let d = 0; d < yearLen; d += 5) {
+    const angle = dayToAngle(d, yearLen);
+    const p1 = angleToXY(angle, R_SOLAR_OUTER - 4);
+    const p2 = angleToXY(angle, R_SOLAR_OUTER);
+    line(p1.x, p1.y, p2.x, p2.y);
+  }
+}
+
+// Compute daylight hours for a given day of year at a given latitude
+// Using standard astronomical formula
+function daylightHours(dayOfYear, latitude) {
+  // Approximate solar declination using day of year
+  // Day 1 = Jan 1; spring equinox ~ day 79
+  const dayAngle = ((dayOfYear - 79) / 365.2422) * 2 * Math.PI;
+  const declination = 23.44 * Math.sin(dayAngle) * Math.PI / 180; // radians
+  const latRad = latitude * Math.PI / 180;
+  // Hour angle at sunrise/sunset
+  const cosH = -Math.tan(latRad) * Math.tan(declination);
+  // Handle polar day/night
+  if (cosH < -1) return 24; // polar day
+  if (cosH > 1) return 0;   // polar night
+  const hourAngle = Math.acos(cosH); // radians
+  return (2 * hourAngle * 180 / Math.PI) / 15; // convert to hours
+}
+
+function drawDaylightShading(yearLen) {
+  // Fill the solar ring with day (light) and night (dark) bands
+  // The "day" band hugs the outer edge; the "night" band hugs the inner edge
+  // The boundary between them is a curve based on actual daylight hours.
+  // At noon-altitude-max (summer solstice), the day band is widest;
+  // at winter solstice, it's narrowest.
+  
+  const ringWidth = R_SOLAR_OUTER - R_SOLAR_INNER;
+  const steps = 365;
+  
+  // Build arrays of boundary points (between day and night bands)
+  const dayPoints = [];   // outer boundary of the day band (= R_SOLAR_OUTER, always)
+  const nightPoints = []; // inner boundary of night band (= R_SOLAR_INNER, always)
+  const splitPoints = []; // where day meets night
+  
+  for (let i = 0; i <= steps; i++) {
+    const day = (i / steps) * yearLen;
+    const dh = daylightHours(day, LATITUDE);
+    // dh ranges from ~8.75 to ~15.6 at 45°N
+    // The outer band represents daylight. When daylight is LONG, outer band should be WIDE,
+    // meaning the split should be CLOSER to the inner edge (small splitRadius).
+    // When daylight is SHORT, outer band should be NARROW, split closer to outer (large splitRadius).
+    const nightFraction = (24 - dh) / 24;
+    const splitRadius = R_SOLAR_INNER + ringWidth * nightFraction;
+    
+    const angle = dayToAngle(day, yearLen) * Math.PI / 180;
+    splitPoints.push({
+      x: CENTER + Math.cos(angle) * splitRadius,
+      y: CENTER + Math.sin(angle) * splitRadius,
+      angle: angle,
+      splitR: splitRadius
+    });
+  }
+  
+  // Draw the day band (outer) — pale warm color
+  fill('#3a3320');
+  noStroke();
+  beginShape();
+  // Outer edge
+  for (let i = 0; i <= steps; i++) {
+    const angle = (i / steps) * 2 * Math.PI - Math.PI / 2;
+    // Adjust for our coordinate convention: dayToAngle returns degrees with day 0 mapped...
+    // Easier: use the splitPoints angles directly for inner, and compute matching outer points
+  }
+  // Reset and use a different approach: iterate through days
+  endShape();
+  
+  // Cleaner approach: draw day band as a single shape, then night band as another
+  
+  // DAY BAND (outer)
+  fill('#3a3320');
+  noStroke();
+  beginShape();
+  // outer boundary first (going around)
+  for (let i = 0; i <= steps; i++) {
+    vertex(
+      CENTER + Math.cos(splitPoints[i].angle) * R_SOLAR_OUTER,
+      CENTER + Math.sin(splitPoints[i].angle) * R_SOLAR_OUTER
+    );
+  }
+  // inner boundary back (the split curve)
+  for (let i = steps; i >= 0; i--) {
+    vertex(splitPoints[i].x, splitPoints[i].y);
+  }
+  endShape(CLOSE);
+  
+  // NIGHT BAND (inner)
+  fill('#06090f');
+  noStroke();
+  beginShape();
+  // outer boundary first (the split curve)
+  for (let i = 0; i <= steps; i++) {
+    vertex(splitPoints[i].x, splitPoints[i].y);
+  }
+  // inner boundary back
+  for (let i = steps; i >= 0; i--) {
+    vertex(
+      CENTER + Math.cos(splitPoints[i].angle) * R_SOLAR_INNER,
+      CENTER + Math.sin(splitPoints[i].angle) * R_SOLAR_INNER
+    );
+  }
+  endShape(CLOSE);
+}
+
+function drawSolarStations(yearLen) {
+  const stations = [
+    { name: 'Winter Solstice', day: 355, big: true },
+    { name: 'Imbolc', day: 32, big: false },
+    { name: 'Spring Equinox', day: 79, big: true },
+    { name: 'Beltane', day: 121, big: false },
+    { name: 'Summer Solstice', day: 172, big: true },
+    { name: 'Lammas', day: 213, big: false },
+    { name: 'Fall Equinox', day: 265, big: true },
+    { name: 'Samhain', day: 305, big: false }
+  ];
+  
+  for (const s of stations) {
+    const angle = dayToAngle(s.day, yearLen);
+    const pos = angleToXY(angle, R_SOLAR_INNER - 8);
+    const r = s.big ? 5 : 3;
+    noStroke();
+    fill(s.big ? C_HIGHLIGHT : C_SOLAR);
+    circle(pos.x, pos.y, r * 2);
+  }
+}
+
+// Find all eclipses (solar and lunar) in a given year
+function findEclipses(year) {
+  const eclipses = [];
+  if (year < 1900 || year > 2100) return eclipses; // astronomy-engine range
+  
+  const startDate = new Date(Date.UTC(year, 0, 1));
+  const endDate = new Date(Date.UTC(year + 1, 0, 1));
+  
+  // Solar eclipses
+  try {
+    let date = startDate;
+    let safety = 0;
+    while (date < endDate && safety < 10) {
+      const ecl = Astronomy.SearchGlobalSolarEclipse(date);
+      if (!ecl || ecl.peak.date >= endDate) break;
+      eclipses.push({
+        date: ecl.peak.date,
+        kind: 'solar',
+        type: ecl.kind  // 'total', 'partial', 'annular'
+      });
+      date = new Date(ecl.peak.date.getTime() + 86400000 * 25);
+      safety++;
+    }
+  } catch (e) { console.error('Solar eclipse search error:', e); }
+  
+  // Lunar eclipses
+  try {
+    let date = startDate;
+    let safety = 0;
+    while (date < endDate && safety < 10) {
+      const ecl = Astronomy.SearchLunarEclipse(date);
+      if (!ecl || ecl.peak.date >= endDate) break;
+      eclipses.push({
+        date: ecl.peak.date,
+        kind: 'lunar',
+        type: ecl.kind  // 'total', 'partial', 'penumbral'
+      });
+      date = new Date(ecl.peak.date.getTime() + 86400000 * 25);
+      safety++;
+    }
+  } catch (e) { console.error('Lunar eclipse search error:', e); }
+  
+  return eclipses;
+}
+
+function drawLunarRing(yearLen) {
+  noFill();
+  stroke(C_LUNAR);
+  strokeWeight(1);
+  circle(CENTER, CENTER, R_LUNAR_OUTER * 2);
+  circle(CENTER, CENTER, R_LUNAR_INNER * 2);
+  
+  const synodic = 29.5306;
+  const anchor = state.autoAnchor + state.lunarOffsetDays;
+  // Þrilīþa: 13-month leap year (third Litha inserted at midsummer)
+  const isLeap = isThirdLithaYear(state.year);
+  const monthCount = isLeap ? 13 : 12;
+  const boundaries = [];
+  for (let i = 0; i <= monthCount; i++) {
+    boundaries.push(anchor + i * synodic);
+  }
+  
+  // Get eclipses for this year
+  const eclipses = findEclipses(state.year);
+  
+  // The seam zone (just past the WS angular position) is time-ambiguous: it
+  // holds both the year's OPENING days (early Jan) and its CLOSING days
+  // (Dec 21-31, after the next solstice). Show whichever the selected date
+  // actually occupies.
+  const wsRefDate = new Date(Date.UTC(state.year - 1, 11, 21));
+  const selRefDate = dateFromDayOfYear(state.year, state.dayOfYear);
+  const selDaysFromWS = (selRefDate - wsRefDate) / 86400000;
+  const showClosing = selDaysFromWS > yearLen;  // viewing Dec 21-31, past next WS
+  
+  // Gap arc: the stretch (if any) between the lunar year's last new moon and
+  // the next winter solstice. Clipped at the WS — the head-side seam [WS, anchor]
+  // is no longer blank: the outgoing lunation's ghost lives there instead.
+  const gapStart = boundaries[monthCount];
+  const gapEnd = showClosing ? (anchor + yearLen) : Math.min(anchor + yearLen, yearLen);
+  if (gapEnd > gapStart) {
+    drawArc(gapStart, gapEnd, yearLen, R_LUNAR_INNER, R_LUNAR_OUTER, C_GAP);
+  }
+  
+  // ===== GHOST MONTH (the Yule seam) =====
+  // The lunation in progress at the winter solstice — the outgoing year's
+  // Fore Yule — continues into this circle's opening days [WS, first new moon].
+  // Render its tail dimmed: the moon cycle never pauses at the year seam.
+  if (anchor > 0.5 && !showClosing) {
+    drawArc(0, anchor, yearLen, R_LUNAR_INNER, R_LUNAR_OUTER, 'rgba(122,147,196,0.10)');
+    // Ghost full moon: the outgoing lunation's full moon, if it falls after WS
+    const ghostFM = anchor - synodic / 2;
+    if (ghostFM > 0.5) {
+      const gAngle = dayToAngle(((ghostFM + 355) % yearLen + yearLen) % yearLen, yearLen);
+      const gPos = angleToXY(gAngle, (R_LUNAR_INNER + R_LUNAR_OUTER) / 2);
+      fill('rgba(255,255,255,0.30)');
+      stroke(C_FAINT);
+      strokeWeight(0.8);
+      circle(gPos.x, gPos.y, 7);
+    }
+    // Ghost label: the outgoing month's name, dimmed, if there's room
+    if (anchor > 13) {
+      const lblSet = THEME.labelSets[state.labelSet] || THEME.labelSets.runic;
+      const gMid = anchor / 2;
+      const gA = dayToAngle(((gMid + 355) % yearLen + yearLen) % yearLen, yearLen);
+      const gP = angleToXY(gA, R_LUNAR_INNER + 12);
+      noStroke();
+      fill('rgba(122,147,196,0.45)');
+      textSize(9);
+      textAlign(CENTER, CENTER);
+      text(lblSet[11], gP.x, gP.y);
+    }
+  }
+  
+  // Helper: convert eclipse date to days-past-winter-solstice for matching
+  function eclipseDaysFromWS(eclipseDate) {
+    const wsDate = new Date(Date.UTC(state.year - 1, 11, 21));
+    return (eclipseDate - wsDate) / 86400000;
+  }
+  
+  // Helper: find the closest boundary or midpoint to an eclipse date
+  function findClosestMoonAngle(eclipseDays, isNewMoon) {
+    // For solar eclipse: match to boundary (new moon)
+    // For lunar eclipse: match to midpoint (full moon)
+    let bestDistance = Infinity;
+    let bestDays = 0;
+    if (isNewMoon) {
+      for (let i = 0; i < boundaries.length; i++) {
+        const dist = Math.abs(boundaries[i] - eclipseDays);
+        if (dist < bestDistance) { bestDistance = dist; bestDays = boundaries[i]; }
+      }
+    } else {
+      // Include the ghost full moon (outgoing lunation's) as a match target
+      const ghostFM = anchor - synodic / 2;
+      if (ghostFM > 0.5) {
+        const gd = Math.abs(ghostFM - eclipseDays);
+        if (gd < bestDistance) { bestDistance = gd; bestDays = ghostFM; }
+      }
+      for (let i = 0; i < boundaries.length - 1; i++) {
+        const mid = (boundaries[i] + boundaries[i + 1]) / 2;
+        const dist = Math.abs(mid - eclipseDays);
+        if (dist < bestDistance) { bestDistance = dist; bestDays = mid; }
+      }
+    }
+    return { days: bestDays, distance: bestDistance };
+  }
+  
+  // Boundaries (new moons) and full moon midpoints
+  stroke(C_LUNAR);
+  strokeWeight(0.8);
+  for (let i = 0; i < boundaries.length; i++) {
+    const daysFromWS = boundaries[i];
+    // The circle spans one solar year [WS, next WS). Boundaries beyond the next
+    // WS are clipped when viewing the year's body (they appear as next year's
+    // ghost), but drawn wrapped when the selected date is itself in the closing
+    // days — then the seam zone belongs to THIS overflow, not last year's.
+    if (daysFromWS > yearLen && !showClosing) continue;
+    const dayInCycle = ((daysFromWS + 355) % yearLen + yearLen) % yearLen;
+    const angle = dayToAngle(dayInCycle, yearLen);
+    const p1 = angleToXY(angle, R_LUNAR_INNER);
+    const p2 = angleToXY(angle, R_LUNAR_OUTER);
+    line(p1.x, p1.y, p2.x, p2.y);
+    // New moon dot (filled black)
+    const dotPos = angleToXY(angle, (R_LUNAR_INNER + R_LUNAR_OUTER) / 2);
+    fill('#0e1320');
+    stroke('#5a6072');
+    strokeWeight(0.5);
+    circle(dotPos.x, dotPos.y, 7);
+    noStroke();
+    stroke(C_LUNAR);
+  }
+  
+  // Full moon markers (filled white circles at midpoint of each lunar month)
+  for (let i = 0; i < boundaries.length - 1; i++) {
+    const midDays = (boundaries[i] + boundaries[i + 1]) / 2;
+    if (midDays > yearLen && !showClosing) continue;  // next year's circle (ghost there)
+    const dayInCycle = ((midDays + 355) % yearLen + yearLen) % yearLen;
+    const angle = dayToAngle(dayInCycle, yearLen);
+    const pos = angleToXY(angle, (R_LUNAR_INNER + R_LUNAR_OUTER) / 2);
+    // Filled white circle with thin dark outline
+    fill('#ffffff');
+    stroke(C_INK);
+    strokeWeight(0.5);
+    circle(pos.x, pos.y, 7);
+  }
+  
+  // Eclipse halos — drawn AFTER the markers so they're visible on top
+  for (const ecl of eclipses) {
+    const eclipseDays = eclipseDaysFromWS(ecl.date);
+    const isNewMoon = ecl.kind === 'solar';
+    const match = findClosestMoonAngle(eclipseDays, isNewMoon);
+    // Only draw if within ~3 days (some lunar eclipses may not match perfectly due to averaging)
+    if (match.distance > 3) continue;
+    if (match.days > yearLen && !showClosing) continue;  // clipped past WS (next year's circle)
+    
+    const dayInCycle = ((match.days + 355) % yearLen + yearLen) % yearLen;
+    const angle = dayToAngle(dayInCycle, yearLen);
+    const pos = angleToXY(angle, (R_LUNAR_INNER + R_LUNAR_OUTER) / 2);
+    
+    // Style by type
+    let haloColor, haloWeight, isDashed;
+    if (ecl.kind === 'solar') {
+      haloColor = '#d97a1a';  // orange-gold for solar
+      if (ecl.type === 'total') { haloWeight = 2.5; isDashed = false; }
+      else if (ecl.type === 'annular') { haloWeight = 1.5; isDashed = false; }
+      else { haloWeight = 1.5; isDashed = true; }  // partial
+    } else {
+      haloColor = '#a83232';  // red for lunar
+      if (ecl.type === 'total') { haloWeight = 2.5; isDashed = false; }
+      else if (ecl.type === 'partial') { haloWeight = 1.5; isDashed = false; }
+      else { haloWeight = 1.5; isDashed = true; }  // penumbral
+    }
+    
+    noFill();
+    stroke(haloColor);
+    strokeWeight(haloWeight);
+    if (isDashed) {
+      // Draw dashed circle by tracing segments
+      const haloR = 8;
+      const segments = 16;
+      for (let s = 0; s < segments; s += 2) {
+        const a1 = (s / segments) * 2 * Math.PI;
+        const a2 = ((s + 1) / segments) * 2 * Math.PI;
+        const x1 = pos.x + Math.cos(a1) * haloR;
+        const y1 = pos.y + Math.sin(a1) * haloR;
+        const x2 = pos.x + Math.cos(a2) * haloR;
+        const y2 = pos.y + Math.sin(a2) * haloR;
+        // Approximate arc with multiple short lines
+        const steps = 4;
+        for (let i = 0; i < steps; i++) {
+          const ta = a1 + (a2 - a1) * (i / steps);
+          const tb = a1 + (a2 - a1) * ((i + 1) / steps);
+          line(pos.x + Math.cos(ta) * haloR, pos.y + Math.sin(ta) * haloR,
+               pos.x + Math.cos(tb) * haloR, pos.y + Math.sin(tb) * haloR);
+        }
+      }
+    } else {
+      circle(pos.x, pos.y, 16);
+    }
+  }
+  
+  // Lunar month names in runes (with Elder Futhark number rune as secondary marker)
+  let RUNES = THEME.numberRunes.slice();
+  let NAMES = (THEME.labelSets[state.labelSet] || THEME.labelSets.runic).slice();
+  if (isLeap) {
+    // Insert the third Litha between Before Litha (6) and After Litha (7).
+    // It carries no number — it stands outside the twelve — marked ᛇ (ēoh, yew).
+    NAMES.splice(6, 0, state.labelSet === 'english' ? 'Third Litha' : 'ᛏᚱᛁ᛫ᛚᛁᚦᚫ');
+    RUNES.splice(6, 0, 'ᛇ');
+  }
+  
+  textAlign(CENTER, CENTER);
+  noStroke();
+  for (let i = 0; i < monthCount; i++) {
+    // Clip the final month's label to its visible portion (tail past WS is
+    // shown as next year's ghost instead)
+    if (boundaries[i] >= yearLen && !showClosing) continue;
+    const visEnd = showClosing ? boundaries[i + 1] : Math.min(boundaries[i + 1], yearLen);
+    const mid = (boundaries[i] + visEnd) / 2;
+    const dayInCycle = ((mid + 355) % yearLen + yearLen) % yearLen;
+    const angle = dayToAngle(dayInCycle, yearLen);
+    
+    // Runic name (primary label, inside lunar ring, larger)
+    fill(C_LUNAR);
+    textSize(9);
+    const namePos = angleToXY(angle, R_LUNAR_INNER + 12);
+    text(NAMES[i], namePos.x, namePos.y);
+    
+    // Number rune (secondary, outside the lunar ring boundary)
+    fill(C_INK);
+    textSize(11);
+    const numPos = angleToXY(angle, R_LUNAR_OUTER + 8);
+    text(RUNES[i], numPos.x, numPos.y);
+  }
+}
+
+function drawArc(startDay, endDay, yearLen, innerR, outerR, color) {
+  if (endDay <= startDay) return;
+  const startDayInCycle = ((startDay + 355) % yearLen + yearLen) % yearLen;
+  const endDayInCycle = ((endDay + 355) % yearLen + yearLen) % yearLen;
+  let startAngle = dayToAngle(startDayInCycle, yearLen) * Math.PI / 180;
+  let endAngle = dayToAngle(endDayInCycle, yearLen) * Math.PI / 180;
+  // For counter-clockwise year direction, endAngle should be LESS than startAngle
+  // (since later days are at smaller angles). Wrap by subtracting 2*PI instead of adding.
+  if (endAngle > startAngle) endAngle -= 2 * Math.PI;
+  fill(color);
+  noStroke();
+  beginShape();
+  const steps = 60;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const a = startAngle + (endAngle - startAngle) * t;
+    vertex(CENTER + Math.cos(a) * outerR, CENTER + Math.sin(a) * outerR);
+  }
+  for (let i = steps; i >= 0; i--) {
+    const t = i / steps;
+    const a = startAngle + (endAngle - startAngle) * t;
+    vertex(CENTER + Math.cos(a) * innerR, CENTER + Math.sin(a) * innerR);
+  }
+  endShape(CLOSE);
+}
+
+function drawTodayMarker(day, yearLen) {
+  const angle = dayToAngle(day, yearLen);
+  stroke(C_HIGHLIGHT);
+  strokeWeight(2);
+  const p1 = angleToXY(angle, R_CENTER + 4);
+  const p2 = angleToXY(angle, R_STAR_OUTER + 5);
+  line(p1.x, p1.y, p2.x, p2.y);
+  noStroke();
+  fill(C_HIGHLIGHT);
+  const dot = angleToXY(angle, R_DAY_MARKER);
+  circle(dot.x, dot.y, 10);
+}
+
+function drawCenter() {
+  noStroke();
+  fill(C_INK);
+  circle(CENTER, CENTER, R_CENTER * 2);
+}
+
+// ============ INTERACTION ============
+// Map p5 mouse coords to drawing coords when canvas is CSS-scaled (mobile)
+function canvasScale() {
+  const c = document.querySelector('canvas');
+  if (!c) return 1;
+  const r = c.getBoundingClientRect();
+  return r.width > 0 ? SIZE / r.width : 1;
+}
+
+function mousePressed() {
+  const k = canvasScale();
+  const dx = mouseX * k - CENTER;
+  const dy = mouseY * k - CENTER;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist >= R_LUNAR_INNER && dist <= R_LUNAR_OUTER) {
+    state.isDragging = true;
+    state.dragStartAngle = Math.atan2(dy, dx);
+    state.dragStartOffset = state.lunarOffsetDays;
+  }
+}
+
+function mouseDragged() {
+  if (!state.isDragging) return;
+  const k = canvasScale();
+  const dx = mouseX * k - CENTER;
+  const dy = mouseY * k - CENTER;
+  const currentAngle = Math.atan2(dy, dx);
+  let deltaAngle = currentAngle - state.dragStartAngle;
+  while (deltaAngle > Math.PI) deltaAngle -= 2 * Math.PI;
+  while (deltaAngle < -Math.PI) deltaAngle += 2 * Math.PI;
+  const yearLen = yearLength(state.year);
+  const deltaDays = (deltaAngle / (2 * Math.PI)) * yearLen;
+  state.lunarOffsetDays = state.dragStartOffset + deltaDays;
+  if (state.lunarOffsetDays > 30) state.lunarOffsetDays = 30;
+  if (state.lunarOffsetDays < -30) state.lunarOffsetDays = -30;
+  document.getElementById('lunarOffset').value = state.lunarOffsetDays;
+  document.getElementById('offsetLabel').textContent = `${state.lunarOffsetDays.toFixed(1)} days`;
+  redraw();
+  updateInfo();
+}
+
+function mouseReleased() {
+  state.isDragging = false;
+}
+
+// ============ INFO ============
+function updateInfo() {
+  const yearLen = yearLength(state.year);
+  const date = new Date(dateFromDayOfYear(state.year, state.dayOfYear).getTime() + state.hour * 3600000);
+  document.getElementById('dayLabel').textContent = date.toUTCString().slice(0, 16);
+  
+  // Equinox sun position in the stars (precession-adjusted)
+  // At spring equinox, sun is at tropical 0° (Aries point).
+  // In sidereal terms at year Y, this corresponds to: 0 - precession_offset
+  const precOffset = (state.year - 2000) * 0.01397;
+  const equinoxSiderealLon = (360 - precOffset) % 360;
+  // Which sidereal sign?
+  const baseSidereal = (360 - SIDEREAL_OFFSET_J2000 - precOffset) % 360;
+  // Actually compute which sign contains the equinox: equinox at sidereal lon = -precession from sidereal Aries 0
+  // Easier: which sign currently contains the tropical 0° point?
+  // Sidereal lon of tropical 0° = -SIDEREAL_OFFSET_J2000 - (year-2000)*precession_rate (mod 360)
+  let sidLonOfEquinox = (-SIDEREAL_OFFSET_J2000 - precOffset) % 360;
+  if (sidLonOfEquinox < 0) sidLonOfEquinox += 360;
+  const signIdx = Math.floor(sidLonOfEquinox / 30);
+  const equinoxSign = SIGNS[signIdx].name;
+  
+  const age = currentAge(state.year);
+  
+  // DEBUG: planet longitudes and signs for cross-checking with Stellarium
+  let planetDebug = '';
+  if (state.year >= 1900 && state.year <= 2100) {
+    const bodies = [
+      { sym: '☉ Sun', body: 'Sun' },
+      { sym: '☽ Moon', body: 'Moon' },
+      { sym: '☿ Mercury', body: 'Mercury' },
+      { sym: '♀ Venus', body: 'Venus' },
+      { sym: '♂ Mars', body: 'Mars' },
+      { sym: '♃ Jupiter', body: 'Jupiter' },
+      { sym: '♄ Saturn', body: 'Saturn' }
+    ];
+    const signNames = ['Aries','Taurus','Gemini','Cancer','Leo','Virgo','Libra','Scorpius','Sagittarius','Capricorn','Aquarius','Pisces'];
+    for (const b of bodies) {
+      try {
+        let elon;
+        if (b.body === 'Moon') {
+          elon = Astronomy.EclipticGeoMoon(date).lon;
+        } else {
+          const vec = Astronomy.GeoVector(b.body, date, true);
+          elon = Astronomy.Ecliptic(vec).elon;
+        }
+        const e = (((elon % 360) + 360) % 360);
+        const tropSign = signNames[Math.floor(e / 30)];
+        const sidLon = (((e - (SIDEREAL_OFFSET_J2000 + precOffset)) % 360) + 360) % 360;
+        const sidSign = signNames[Math.floor(sidLon / 30)];
+        planetDebug += `<div class="row"><span class="label">${b.sym}</span><span class="value">${e.toFixed(1)}° · trop ${tropSign} · sid ${sidSign}</span></div>`;
+      } catch (e) {}
+    }
+    // Lunar nodes + eclipse season status
+    try {
+      const ascN = meanLunarNode(date);
+      const descN = (ascN + 180) % 360;
+      const sunVec = Astronomy.GeoVector('Sun', date, true);
+      const sunLon = (((Astronomy.Ecliptic(sunVec).elon % 360) + 360) % 360);
+      const distAsc = Math.min(Math.abs(sunLon - ascN), 360 - Math.abs(sunLon - ascN));
+      const distDesc = Math.min(Math.abs(sunLon - descN), 360 - Math.abs(sunLon - descN));
+      const nearestDist = Math.min(distAsc, distDesc);
+      const inSeason = nearestDist <= 17;
+      const seasonNote = inSeason
+        ? `<span style="color:#7ac490;">ECLIPSE SEASON — sun ${nearestDist.toFixed(1)}° from node</span>`
+        : `sun ${nearestDist.toFixed(1)}° from nearest node`;
+      planetDebug += `<div class="row"><span class="label">☊ Asc node</span><span class="value">${ascN.toFixed(1)}° · trop ${signNames[Math.floor(ascN/30)]}</span></div>`;
+      planetDebug += `<div class="row"><span class="label">☋ Desc node</span><span class="value">${descN.toFixed(1)}° · trop ${signNames[Math.floor(descN/30)]}</span></div>`;
+      planetDebug += `<div class="row"><span class="label">Eclipse status</span><span class="value">${seasonNote}</span></div>`;
+    } catch (e) {}
+  }
+  
+  document.getElementById('info').innerHTML = `
+    <div class="row"><span class="label">Year</span><span class="value">${state.year}</span></div>
+    <div class="row"><span class="label">Selected date</span><span class="value">${date.toUTCString().slice(0, 16)}</span></div>
+    <div class="row"><span class="label">Astronomical age</span><span class="value age">${age}</span></div>
+    <div class="row"><span class="label">Spring equinox sun rises in</span><span class="value">${equinoxSign}</span></div>
+    <div class="row"><span class="label">Precession offset from J2000</span><span class="value">${precOffset.toFixed(2)}°</span></div>
+    <div class="row"><span class="label">Lunar year</span><span class="value">${isThirdLithaYear(state.year) ? '<span style="color:#c9a24a;">ᛏᚱᛁ᛫ᛚᛁᚦᚫ Þrilīþa — 13 months</span>' : '12 months'}</span></div>
+    <div class="row"><span class="label">Lunar anchor (nearest lunation)</span><span class="value">${state.autoAnchor.toFixed(1)} days past WS</span></div>
+    <div class="row"><span class="label">Lunar offset</span><span class="value">${state.lunarOffsetDays.toFixed(1)} days</span></div>
+    <div style="margin-top:8px; padding-top:6px; border-top:1px solid #4a4f5e; font-size:11px; color:#9aa0b0;">Planet positions (ecliptic longitude · tropical · sidereal):</div>
+    ${planetDebug}
+    <div style="margin-top:8px; padding-top:6px; border-top:1px solid #4a4f5e; font-size:11px; color:#9aa0b0;">Zodiac signs:</div>
+    <div style="font-size:12px; color:#e0d8c0; line-height:1.9; margin-top:4px;">
+      ♈ Aries &nbsp; ♉ Taurus &nbsp; ♊ Gemini &nbsp; ♋ Cancer<br>
+      ♌ Leo &nbsp; ♍ Virgo &nbsp; ♎ Libra &nbsp; ♏ Scorpius<br>
+      ♐ Sagittarius &nbsp; ♑ Capricorn &nbsp; ♒ Aquarius &nbsp; ♓ Pisces
+    </div>
+    <div style="margin-top:10px; font-size: 12px; color: #6a7080;">
+      Outer ring: bright stars at ecliptic positions. Next: 12 sidereal signs, then the seven wanderers, then solar months/stations. Inner: lunar months. Planet/star accuracy: 1900-2100.
+    </div>
+  `;
+}
+</script>
+</body>
+</html>
